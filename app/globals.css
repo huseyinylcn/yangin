@@ -58,6 +58,7 @@ header {
   margin-bottom: 4px;
 }
 
+.row input[type="text"],
 .row input[type="url"],
 .row input[type="number"] {
   width: 100%;
@@ -115,6 +116,13 @@ main {
   background: var(--card);
   border: 1px solid var(--border);
   overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+main.mainAlarm {
+  border-color: rgba(231, 76, 60, 0.85);
+  box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.35), 0 0 24px rgba(231, 76, 60, 0.2);
+  animation: mainAlarmPulse 1.1s ease-in-out infinite;
 }
 
 .status {
@@ -130,6 +138,11 @@ main {
 
 .status.alarm {
   background: linear-gradient(160deg, #5c1515 0%, var(--card) 55%);
+  animation: statusAlarmGlow 1.1s ease-in-out infinite;
+}
+
+.status.alarm .alarmTitle {
+  animation: alarmTitleShake 0.55s ease-in-out infinite;
 }
 
 .status.ok {
@@ -198,4 +211,45 @@ footer {
 
 .loading {
   color: var(--muted);
+}
+
+@keyframes mainAlarmPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.25), 0 0 12px rgba(231, 76, 60, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.55), 0 0 28px rgba(231, 76, 60, 0.35);
+  }
+}
+
+@keyframes statusAlarmGlow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.12);
+  }
+}
+
+@keyframes alarmTitleShake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-2px);
+  }
+  75% {
+    transform: translateX(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main.mainAlarm,
+  .status.alarm,
+  .status.alarm .alarmTitle {
+    animation: none;
+  }
 }
