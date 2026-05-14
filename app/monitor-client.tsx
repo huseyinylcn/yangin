@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const STORAGE_KEY = "yangin-monitor-url";
 const ALEV_ALARM_BELOW = 1500;
 const GAZ_ALARM_ABOVE = 800;
+const FETCH_MS = 10_000;
 
 /** Kullanıcı sadece IP veya IP:port girer; http(s) yoksa http eklenir, sondaki / temizlenir */
 function normalizeUrl(s: string): string {
@@ -131,21 +132,19 @@ export default function MonitorClient() {
       applyReading(NaN, NaN, "IP girin");
       return;
     }
-    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-    fetch(proxyUrl, { method: "GET", cache: "no-store" })
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), FETCH_MS);
+    fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: ctrl.signal,
+      headers: { Accept: "text/html,*/*" },
+    })
       .then(async (res) => {
+        clearTimeout(t);
         const body = await res.text();
         if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          if (res.headers.get("content-type")?.includes("application/json")) {
-            try {
-              const j = JSON.parse(body) as { error?: string };
-              if (j.error) msg = j.error;
-            } catch {
-              /* ignore */
-            }
-          }
-          throw new Error(msg);
+          throw new Error(`HTTP ${res.status}`);
         }
         return body;
       })
@@ -154,9 +153,13 @@ export default function MonitorClient() {
         applyReading(p.alev, p.gaz, null);
       })
       .catch((e: unknown) => {
+        clearTimeout(t);
         let msg = e instanceof Error ? e.message : String(e);
-        if (/Failed to fetch|NetworkError/i.test(msg)) {
-          msg = "Ağ hatası veya sunucu cihaza erişemiyor";
+        if (e instanceof DOMException && e.name === "AbortError") {
+          msg = "Zaman aşımı (cihaz yanıt vermedi)";
+        } else if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+          msg =
+            "Ağ/CORS: tarayıcı cihaza ulaşamadı. Aynı Wi‑Fi’de misiniz? Cihaz Access-Control-Allow-Origin (ör. *) göndermeli.";
         }
         applyReading(NaN, NaN, msg);
       });
@@ -316,8 +319,8 @@ export default function MonitorClient() {
         </div>
       </main>
       <footer>
-        İstekler sunucu üzerinden gidiyor. Vercel gibi bulutta yayınlarsanız sunucu yerel IP’ye erişemez; aynı ağda
-        npm start kullanın.
+        İstek doğrudan bu tarayıcıdan gider (Vercel sunucusu LAN IP’sine erişmez). Cihaz yanıtında CORS başlığı
+        yoksa tarayıcı sayfayı engeller; firmware’de Access-Control-Allow-Origin ekleyin.
       </footer>
     </div>
   );
