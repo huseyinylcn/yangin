@@ -1,11 +1,12 @@
 "use client";
 
+import axios, { isAxiosError } from "axios";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "yangin-monitor-url";
 const ALEV_ALARM_BELOW = 1500;
 const GAZ_ALARM_ABOVE = 800;
-const FETCH_MS = 10_000;
+const REQUEST_MS = 10_000;
 
 /** Kullanıcı sadece IP veya IP:port girer; http(s) yoksa http eklenir, sondaki / temizlenir */
 function normalizeUrl(s: string): string {
@@ -29,12 +30,37 @@ function stripProtocolForDisplay(fullUrl: string): string {
 }
 
 function parseHtml(html: string): { alev: number; gaz: number } {
-  const a = /Alev:\s*([0-9.-]+)/i.exec(html);
-  const g = /Gaz:\s*([0-9.-]+)/i.exec(html);
+  const a = /Alev\s*[:=]?\s*([0-9.-]+)/i.exec(html);
+  const g = /Gaz\s*[:=]?\s*([0-9.-]+)/i.exec(html);
   return {
     alev: a ? parseFloat(a[1]) : NaN,
     gaz: g ? parseFloat(g[1]) : NaN,
   };
+}
+
+function pickNum(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.trim());
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+/** Ham gövde: önce JSON, sonra HTML metin */
+function parsePayload(raw: string): { alev: number; gaz: number } {
+  const t = raw.trim();
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      const j = JSON.parse(t) as Record<string, unknown>;
+      const alev = pickNum(j.alev ?? j.Alev ?? j.ALEV);
+      const gaz = pickNum(j.gaz ?? j.Gaz ?? j.GAZ);
+      if (Number.isFinite(alev) && Number.isFinite(gaz)) return { alev, gaz };
+    } catch {
+      /* HTML veya metin */
+    }
+  }
+  return parseHtml(raw);
 }
 
 function isAlarm(alev: number, gaz: number): boolean | null {
@@ -132,34 +158,32 @@ export default function MonitorClient() {
       applyReading(NaN, NaN, "IP girin");
       return;
     }
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), FETCH_MS);
-    fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      signal: ctrl.signal,
-      headers: { Accept: "text/html,*/*" },
-    })
-      .then(async (res) => {
-        clearTimeout(t);
-        const body = await res.text();
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        return body;
+
+    void axios
+      .get<string>(url, {
+        timeout: REQUEST_MS,
+        responseType: "text",
+        headers: { Accept: "text/html,application/json;q=0.9,*/*;q=0.8" },
       })
-      .then((html) => {
-        const p = parseHtml(html);
+      .then((res) => {
+        const body = typeof res.data === "string" ? res.data : String(res.data ?? "");
+        const p = parsePayload(body);
         applyReading(p.alev, p.gaz, null);
       })
       .catch((e: unknown) => {
-        clearTimeout(t);
-        let msg = e instanceof Error ? e.message : String(e);
-        if (e instanceof DOMException && e.name === "AbortError") {
-          msg = "Zaman aşımı (cihaz yanıt vermedi)";
-        } else if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+        let msg: string;
+        if (isAxiosError(e)) {
+          if (e.code === "ECONNABORTED") msg = "Zaman aşımı";
+          else if (e.response) msg = `HTTP ${e.response.status}`;
+          else msg = e.message || "İstek başarısız";
+        } else {
+          msg = e instanceof Error ? e.message : String(e);
+        }
+        const secure =
+          typeof window !== "undefined" && window.isSecureContext && url.startsWith("http:");
+        if (secure && /Network Error|ERR_NETWORK|Failed to fetch|NetworkError/i.test(msg)) {
           msg =
-            "Ağ/CORS: tarayıcı cihaza ulaşamadı. Aynı Wi‑Fi’de misiniz? Cihaz Access-Control-Allow-Origin (ör. *) göndermeli.";
+            "HTTPS sayfadan http:// cihaza istek tarayıcıda bloklanır; paneli http:// ile aç veya cihazı https yap.";
         }
         applyReading(NaN, NaN, msg);
       });
@@ -318,10 +342,7 @@ export default function MonitorClient() {
           )}
         </div>
       </main>
-      <footer>
-        İstek doğrudan bu tarayıcıdan gider (Vercel sunucusu LAN IP’sine erişmez). Cihaz yanıtında CORS başlığı
-        yoksa tarayıcı sayfayı engeller; firmware’de Access-Control-Allow-Origin ekleyin.
-      </footer>
+      <footer>İstek tarayıcıdan gider. Vercel (HTTPS) + cihaz (HTTP) kombinasyonunda tarayıcı isteği keser; yerelde http://localhost ile dene.</footer>
     </div>
   );
 }
